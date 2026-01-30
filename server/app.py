@@ -13,12 +13,20 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 import requests
 
-from subscriptions import (
-    init_subscription_db,
-    list_subscription_plans,
-    record_subscription_plan,
-    record_subscription_signup,
-)
+try:
+    from server.subscriptions import (
+        init_subscription_db,
+        list_subscription_plans,
+        record_subscription_plan,
+        record_subscription_signup,
+    )
+except ModuleNotFoundError:
+    from subscriptions import (
+        init_subscription_db,
+        list_subscription_plans,
+        record_subscription_plan,
+        record_subscription_signup,
+    )
 
 load_dotenv()
 
