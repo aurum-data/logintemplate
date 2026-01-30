@@ -1,21 +1,22 @@
-﻿# Login Template Engineering Brief
+# Login Template Engineering Brief
 
 ## Overview
-This repo is a minimal React + Express app that implements Google Sign-In (Google Identity Services) and stores
+This repo is a minimal React + Flask app that implements Google Sign-In (Google Identity Services) and stores
 an authenticated session in a signed HTTP-only cookie. It is meant as a clean starting point for any app
 that needs Google authentication before hitting protected API routes.
 
 ## Repository Layout
-- `server/index.js` - Express API, session signing, Google ID token verification, and static file hosting.
+- `server/app.py` - Flask API, session signing, Google ID token verification, and static file hosting.
 - `client/` - Vite + React SPA with a simple login UI.
 - `.env.example` - Environment variables you need to run the app.
+- `requirements.txt` - Python dependencies for the Flask server.
 - `documentation/BRIEF.md` - This document.
 
 ## How Authentication Works
 1. The client loads the Google Identity Services script (`https://accounts.google.com/gsi/client`).
 2. Clicking "Sign in with Google" opens the Google popup. Google returns an **ID token** (credential).
 3. The client posts the ID token to `POST /api/auth/google`.
-4. The server verifies the ID token using `google-auth-library` and the configured `GOOGLE_CLIENT_ID`.
+4. The server verifies the ID token using `google-auth` and the configured `GOOGLE_CLIENT_ID`.
 5. On success, the server creates a signed session token and sets it in the `lt_auth` cookie.
 6. The client checks session state via `GET /api/auth/me` and uses `credentials: 'include'` on protected calls.
 
@@ -23,7 +24,7 @@ that needs Google authentication before hitting protected API routes.
 The session token is a simple HMAC-signed payload:
 - Body: JSON `{ sub, email, name, picture, iss, exp }`.
 - Signature: `HMAC-SHA256(SESSION_SECRET, body)`.
-- Stored as `base64url(body) + '.' + signature`.
+- Stored as `base64url(body) + '.' + base64url(signature)`.
 
 This keeps the cookie self-contained and server verification is just signature + expiry checks. The cookie
 is `HttpOnly`, `SameSite=Lax`, and marked `Secure` in production.
@@ -34,7 +35,7 @@ is `HttpOnly`, `SameSite=Lax`, and marked `Secure` in production.
 - `POST /api/auth/google` - Verifies Google ID token, sets session cookie, returns `{ authenticated, user }`.
 - `GET /api/auth/me` - Reads the session cookie and returns `{ authenticated, user, expiresAt }`.
 - `POST /api/auth/logout` - Clears the session cookie.
-- `GET /api/secret` - Example protected endpoint using `requireAuth`.
+- `GET /api/secret` - Example protected endpoint using `require_auth`.
 
 ## Environment Variables
 Required:
@@ -48,19 +49,19 @@ Optional:
 - `COOKIE_SECURE` - Force Secure cookies (`true`), otherwise `NODE_ENV=production` enables it.
 
 ## Local Development
-1. `npm install`
+1. `pip install -r requirements.txt`
 2. Copy `.env.example` to `.env` and fill out the required variables.
-3. Run the server: `npm run dev` (http://localhost:3000).
-4. Run the client: `npm run client:dev` (http://localhost:5173).
+3. Run the server: `python server/app.py` (http://localhost:3000).
+4. Run the client: `npm install` then `npm run client:dev` (http://localhost:5173).
 
-The Vite dev server proxies `/api` to the Express server via `client/vite.config.js`.
+The Vite dev server proxies `/api` to the Flask server via `client/vite.config.js`.
 
 ## Production Build
 - Run `npm run build` to create `client/dist`.
-- The Express server serves `client/dist` automatically if it exists.
+- The Flask server serves `client/dist` automatically if it exists.
 
 ## How to Extend This Template
-- Add new protected endpoints: wrap with `requireAuth` and use `req.user`.
+- Add new protected endpoints: wrap with `@require_auth` and use `g.user`.
 - Store users in a database: insert in the `/api/auth/google` handler after verification.
 - Swap Google auth: keep the session cookie model and replace the ID token verification.
 - Add roles/permissions: include role claims in the session payload and check them in middleware.
