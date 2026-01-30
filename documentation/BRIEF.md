@@ -46,6 +46,10 @@ Optional:
 - `CORS_ORIGIN` / `CORS_ORIGINS` - Comma-separated list of allowed origins.
 - `COOKIE_SECURE` - Force Secure cookies (`true`), otherwise `NODE_ENV=production` enables it.
 
+Notes:
+- `GOOGLE_CLIENT_ID` must be configured with the exact JavaScript origins you will use (local + production).
+- `requests` is required by `google-auth`'s transport and is included in `requirements.txt`.
+
 ## Local Development
 1. `pip install -r requirements.txt`
 2. Copy `.env.example` to `.env` and fill out the required variables.
@@ -57,6 +61,22 @@ The Vite dev server proxies `/api` to the Flask server via `client/vite.config.j
 ## Production Build
 - Run `npm run build` to create `client/dist`.
 - The Flask server serves `client/dist` automatically if it exists.
+
+## Render Deployment (Web Service)
+- Build command:
+  - `pip install -r requirements.txt && npm --prefix client install --include=dev && npm --prefix client run build`
+- Start command:
+  - `gunicorn --bind 0.0.0.0:$PORT server.app:app`
+- Render injects `PORT` automatically.
+
+Environment variables to set on Render:
+- `GOOGLE_CLIENT_ID`
+- `AUTH_SESSION_SECRET`
+- Optional: `COOKIE_SECURE=true`, `NODE_ENV=production`, `CORS_ORIGINS=https://your-app.onrender.com`
+
+## Troubleshooting
+- **GSI_LOGGER: The given origin is not allowed** or `gsi/status 403`: add the current origin to the OAuth client
+  in Google Cloud Console under "Authorized JavaScript origins", then wait a few minutes for propagation.
 
 ## How to Extend This Template
 - Add new protected endpoints: wrap with `@require_auth` and use `g.user`.
