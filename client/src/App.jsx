@@ -96,6 +96,9 @@ function App() {
   const [subscriptionError, setSubscriptionError] = useState('')
   const [subscriptionMessage, setSubscriptionMessage] = useState('')
   const [chargeConsent, setChargeConsent] = useState(false)
+  const [subscriptionPlans, setSubscriptionPlans] = useState([])
+  const [subscriptionPlansLoading, setSubscriptionPlansLoading] = useState(true)
+  const [subscriptionPlansError, setSubscriptionPlansError] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
   const [adminLoading, setAdminLoading] = useState(false)
   const [adminError, setAdminError] = useState('')
@@ -111,7 +114,7 @@ function App() {
     intervalUnit: 'MONTH',
     intervalCount: 1,
   })
-  const paypalButtonRef = useRef(null)
+  const planButtonRefs = useRef(new Map())
 
   const paypalPlanBaseUrl =
     subscriptionConfig?.paypalEnv === 'live'
@@ -182,6 +185,40 @@ function App() {
     }
 
     initAuth()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadPlans = async () => {
+      setSubscriptionPlansLoading(true)
+      setSubscriptionPlansError('')
+      try {
+        const response = await fetch('/api/subscription/plans', { credentials: 'include' })
+        if (!response.ok) {
+          throw new Error('Unable to load subscription plans')
+        }
+        const data = await response.json()
+        if (!cancelled) {
+          setSubscriptionPlans(Array.isArray(data?.plans) ? data.plans : [])
+        }
+      } catch (err) {
+        console.error('Subscription plans load failed:', err)
+        if (!cancelled) {
+          setSubscriptionPlans([])
+          setSubscriptionPlansError(
+            err instanceof Error ? err.message : 'Unable to load subscription plans.',
+          )
+        }
+      } finally {
+        if (!cancelled) {
+          setSubscriptionPlansLoading(false)
+        }
+      }
+    }
+    loadPlans()
     return () => {
       cancelled = true
     }
@@ -305,31 +342,49 @@ function App() {
   }, [isAdmin])
 
   useEffect(() => {
+    const clearContainers = () => {
+      planButtonRefs.current.forEach((node) => {
+        if (node) {
+          node.innerHTML = ''
+        }
+      })
+    }
+
     if (!subscriptionConfig?.paypalConfigured) {
-      if (paypalButtonRef.current) {
-        paypalButtonRef.current.innerHTML = ''
-      }
+      clearContainers()
       return
     }
     if (!authUser) {
-      if (paypalButtonRef.current) {
-        paypalButtonRef.current.innerHTML = ''
-      }
+      clearContainers()
       return
     }
     if (subscriptionConfig?.paypalEnv === 'live' && !chargeConsent) {
-      if (paypalButtonRef.current) {
-        paypalButtonRef.current.innerHTML = ''
-      }
+      clearContainers()
+      return
+    }
+    if (!subscriptionPlans.length) {
+      clearContainers()
+      return
+    }
+
+    const currencySet = new Set(
+      subscriptionPlans
+        .map((plan) => (plan.currency_code || 'USD').toUpperCase())
+        .filter(Boolean),
+    )
+    if (currencySet.size > 1) {
+      setSubscriptionError('Plans use multiple currencies. Load one currency at a time.')
+      clearContainers()
       return
     }
 
     let cancelled = false
-    let buttons = null
+    const activeButtons = new Map()
 
     const renderButtons = async () => {
       setSubscriptionError('')
-      const currency = subscriptionConfig?.subscription?.currency || 'USD'
+      const currency =
+        currencySet.values().next().value || subscriptionConfig?.subscription?.currency || 'USD'
       await loadPayPalScript({
         clientId: subscriptionConfig?.paypalClientId,
         currency,
@@ -338,56 +393,61 @@ function App() {
       if (!window.paypal?.Buttons) {
         throw new Error('PayPal Buttons unavailable')
       }
-      if (paypalButtonRef.current) {
-        paypalButtonRef.current.innerHTML = ''
-      }
-      buttons = window.paypal.Buttons({
-        style: {
-          layout: 'vertical',
-          shape: 'rect',
-          label: 'subscribe',
-        },
-        createSubscription: (data, actions) =>
-          actions.subscription.create({
-            plan_id: subscriptionConfig?.paypalPlanId,
-          }),
-        onApprove: async (data) => {
-          if (!data?.subscriptionID) {
-            setSubscriptionError('Subscription approval was missing an ID.')
-            return
-          }
-          setSubscriptionMessage('Confirming your subscription...')
-          try {
-            const response = await fetch('/api/subscription/verify', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'include',
-              body: JSON.stringify({ subscriptionId: data.subscriptionID }),
-            })
-            const result = await response.json().catch(() => ({}))
-            if (!response.ok) {
-              throw new Error(result?.error || 'Subscription verification failed')
+
+      subscriptionPlans.forEach((plan) => {
+        const planId = plan.paypal_plan_id
+        const container = planButtonRefs.current.get(planId)
+        if (!planId || !container) return
+        container.innerHTML = ''
+        const buttons = window.paypal.Buttons({
+          style: {
+            layout: 'vertical',
+            shape: 'rect',
+            label: 'subscribe',
+          },
+          createSubscription: (data, actions) =>
+            actions.subscription.create({
+              plan_id: planId,
+            }),
+          onApprove: async (data) => {
+            if (!data?.subscriptionID) {
+              setSubscriptionError('Subscription approval was missing an ID.')
+              return
             }
-            setSubscriptionMessage(
-              `Subscription ${result?.status || 'submitted'} (ID: ${
-                result?.subscriptionId || data.subscriptionID
-              }).`,
-            )
-            setSubscriptionError('')
-          } catch (err) {
-            console.error('Subscription verification failed:', err)
-            setSubscriptionMessage('')
-            setSubscriptionError(
-              err instanceof Error ? err.message : 'Subscription verification failed.',
-            )
-          }
-        },
-        onError: (err) => {
-          console.error('PayPal Buttons error:', err)
-          setSubscriptionError('Payment failed to initialize. Please try again.')
-        },
+            setSubscriptionMessage('Confirming your subscription...')
+            try {
+              const response = await fetch('/api/subscription/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ subscriptionId: data.subscriptionID }),
+              })
+              const result = await response.json().catch(() => ({}))
+              if (!response.ok) {
+                throw new Error(result?.error || 'Subscription verification failed')
+              }
+              setSubscriptionMessage(
+                `Subscription ${result?.status || 'submitted'} (ID: ${
+                  result?.subscriptionId || data.subscriptionID
+                }).`,
+              )
+              setSubscriptionError('')
+            } catch (err) {
+              console.error('Subscription verification failed:', err)
+              setSubscriptionMessage('')
+              setSubscriptionError(
+                err instanceof Error ? err.message : 'Subscription verification failed.',
+              )
+            }
+          },
+          onError: (err) => {
+            console.error('PayPal Buttons error:', err)
+            setSubscriptionError('Payment failed to initialize. Please try again.')
+          },
+        })
+        buttons.render(container)
+        activeButtons.set(planId, buttons)
       })
-      buttons.render(paypalButtonRef.current)
     }
 
     renderButtons().catch((err) => {
@@ -397,11 +457,13 @@ function App() {
 
     return () => {
       cancelled = true
-      if (buttons?.close) {
-        buttons.close()
-      }
+      activeButtons.forEach((buttons) => {
+        if (buttons?.close) {
+          buttons.close()
+        }
+      })
     }
-  }, [authUser, chargeConsent, subscriptionConfig])
+  }, [authUser, chargeConsent, subscriptionConfig, subscriptionPlans])
 
   const handleGoogleCredential = async (credential) => {
     try {
@@ -490,6 +552,15 @@ function App() {
 
   const updatePlanForm = (field, value) => {
     setPlanForm((prev) => ({ ...prev, [field]: value }))
+  }
+
+  const setPlanButtonRef = (planId) => (node) => {
+    if (!planId) return
+    if (node) {
+      planButtonRefs.current.set(planId, node)
+    } else {
+      planButtonRefs.current.delete(planId)
+    }
   }
 
   const submitPlan = async (event) => {
@@ -658,30 +729,19 @@ function App() {
             ) : subscriptionConfig?.paypalConfigured ? (
               <div className="plan">
                 <div>
-                  <p className="plan__label">Plan</p>
-                  <p className="plan__value">
-                    {subscriptionConfig?.subscription?.name || 'Subscription'}
-                  </p>
-                </div>
-                <div>
-                  <p className="plan__label">Price</p>
-                  <p className="plan__value">
-                    {subscriptionConfig?.subscription?.price
-                      ? `${subscriptionConfig.subscription.price} ${subscriptionConfig?.subscription?.currency}`
-                      : subscriptionConfig?.subscription?.currency || 'USD'}
-                  </p>
-                </div>
-                <div>
                   <p className="plan__label">Environment</p>
                   <p className="plan__value">
                     {subscriptionConfig?.paypalEnv === 'live' ? 'Live' : 'Sandbox'}
                   </p>
                 </div>
+                <div>
+                  <p className="plan__label">Plans available</p>
+                  <p className="plan__value">{subscriptionPlans.length}</p>
+                </div>
               </div>
             ) : (
               <p className="muted">
-                PayPal is not configured. Set PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, and
-                PAYPAL_PLAN_ID.
+                PayPal is not configured. Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET.
               </p>
             )}
 
@@ -705,10 +765,48 @@ function App() {
             {!authUser ? (
               <div className="notice warn">Sign in to enable the subscription checkout.</div>
             ) : null}
+            {subscriptionPlansError ? (
+              <div className="notice error">{subscriptionPlansError}</div>
+            ) : null}
             {subscriptionError ? <div className="notice error">{subscriptionError}</div> : null}
-            {subscriptionMessage ? <div className="notice success">{subscriptionMessage}</div> : null}
+            {subscriptionMessage ? (
+              <div className="notice success">{subscriptionMessage}</div>
+            ) : null}
 
-            <div className="paypal" ref={paypalButtonRef} />
+            <div className="plan-grid">
+              {subscriptionPlansLoading ? (
+                <p className="muted">Loading plans...</p>
+              ) : subscriptionPlans.length ? (
+                subscriptionPlans.map((plan) => (
+                  <div className="plan-card" key={plan.paypal_plan_id}>
+                    <div className="plan-card__header">
+                      <div>
+                        <p className="plan__label">Plan</p>
+                        <p className="plan__value">{plan.plan_name || 'Subscription plan'}</p>
+                      </div>
+                      <div>
+                        <p className="plan__label">Price</p>
+                        <p className="plan__value">
+                          {plan.price_value} {plan.currency_code}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="plan__label">Billing</p>
+                        <p className="plan__value">
+                          Every {plan.billing_interval_count} {plan.billing_interval_unit}
+                        </p>
+                      </div>
+                    </div>
+                    {plan.plan_description ? (
+                      <p className="muted">{plan.plan_description}</p>
+                    ) : null}
+                    <div className="paypal" ref={setPlanButtonRef(plan.paypal_plan_id)} />
+                  </div>
+                ))
+              ) : (
+                <p className="muted">No subscription plans available yet.</p>
+              )}
+            </div>
           </section>
         </div>
       ) : (

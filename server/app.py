@@ -64,7 +64,6 @@ ADMIN_EMAILS = set(parse_origins(os.getenv('ADMIN_EMAILS')))
 
 PAYPAL_CLIENT_ID = os.getenv('PAYPAL_CLIENT_ID')
 PAYPAL_CLIENT_SECRET = os.getenv('PAYPAL_CLIENT_SECRET')
-PAYPAL_PLAN_ID = os.getenv('PAYPAL_PLAN_ID')
 PAYPAL_ENV = (os.getenv('PAYPAL_ENV') or 'sandbox').lower()
 PAYPAL_BASE_URL = os.getenv('PAYPAL_API_BASE_URL')
 SUBSCRIPTION_NAME = os.getenv('SUBSCRIPTION_NAME') or 'Prototype Subscription'
@@ -171,7 +170,7 @@ def is_admin(session):
 
 
 def paypal_configured():
-    return bool(PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET and PAYPAL_PLAN_ID)
+    return bool(PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET)
 
 
 def get_paypal_base_url():
@@ -312,7 +311,6 @@ def subscription_config():
         {
             'paypalConfigured': paypal_configured(),
             'paypalClientId': PAYPAL_CLIENT_ID or None,
-            'paypalPlanId': PAYPAL_PLAN_ID or None,
             'paypalEnv': PAYPAL_ENV,
             'subscription': {
                 'name': SUBSCRIPTION_NAME,
@@ -321,6 +319,18 @@ def subscription_config():
             },
         }
     )
+
+
+@app.get('/api/subscription/plans')
+def subscription_plans():
+    if not SUBSCRIPTIONS_DB_READY:
+        return jsonify({'error': 'Subscriptions database not available'}), 500
+    try:
+        plans = list_subscription_plans()
+    except Exception as exc:
+        print(f'Failed to load subscription plans: {exc}')
+        return jsonify({'error': 'Unable to load subscription plans'}), 500
+    return jsonify({'plans': plans})
 
 
 @app.get('/api/auth/me')
@@ -405,7 +415,20 @@ def subscription_verify():
         return jsonify({'error': 'Unable to verify subscription'}), 502
 
     plan_id = details.get('plan_id')
-    if PAYPAL_PLAN_ID and plan_id != PAYPAL_PLAN_ID:
+    if not plan_id:
+        return jsonify({'error': 'Subscription plan missing'}), 400
+
+    allowed_plan_ids = set()
+    try:
+        known_plans = list_subscription_plans()
+        for plan in known_plans:
+            if plan.get('paypal_plan_id'):
+                allowed_plan_ids.add(plan['paypal_plan_id'])
+    except Exception as exc:
+        print(f'Failed to check subscription plans: {exc}')
+        return jsonify({'error': 'Unable to verify subscription plan'}), 500
+
+    if allowed_plan_ids and plan_id not in allowed_plan_ids:
         return jsonify({'error': 'Subscription plan mismatch'}), 400
 
     if not details.get('id'):

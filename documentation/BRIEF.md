@@ -35,6 +35,7 @@ is `HttpOnly`, `SameSite=Lax`, and marked `Secure` in production.
 - `POST /api/auth/logout` - Clears the session cookie.
 - `GET /api/secret` - Example protected endpoint using `require_auth`.
 - `GET /api/subscription/config` - Returns PayPal + subscription display config.
+- `GET /api/subscription/plans` - Returns subscription plans stored in the database.
 - `POST /api/subscription/verify` - Validates a PayPal subscription ID and records the signup.
 - `GET /api/admin/config` - Returns `{ authenticated, isAdmin, paypalConfigured }`.
 - `GET /api/admin/plans` - Lists PayPal plans created via the admin UI.
@@ -52,7 +53,6 @@ Optional:
 - `COOKIE_SECURE` - Force Secure cookies (`true`), otherwise `NODE_ENV=production` enables it.
 - `PAYPAL_CLIENT_ID` - PayPal REST client ID (required for Subscription page).
 - `PAYPAL_CLIENT_SECRET` - PayPal REST client secret.
-- `PAYPAL_PLAN_ID` - PayPal subscription plan ID.
 - `PAYPAL_ENV` - `sandbox` or `live` (default `sandbox`).
 - `SUBSCRIPTION_NAME` - Display name for the subscription plan.
 - `SUBSCRIPTION_PRICE` - Display price for the subscription plan.

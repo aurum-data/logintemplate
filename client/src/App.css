@@ -199,6 +199,27 @@ h1 {
   margin-top: 16px;
 }
 
+.plan-grid {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.plan-card {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+  background: #ffffff;
+  box-shadow: var(--shadow);
+}
+
+.plan-card__header {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
 .admin-form {
   display: grid;
   gap: 16px;
