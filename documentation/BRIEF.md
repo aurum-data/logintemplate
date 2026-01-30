@@ -1,9 +1,7 @@
 # Login Template Engineering Brief
 
 ## Overview
-This repo is a minimal React + Flask app that implements Google Sign-In (Google Identity Services) and stores
-an authenticated session in a signed HTTP-only cookie. It is meant as a clean starting point for any app
-that needs Google authentication before hitting protected API routes.
+This repo is a minimal React + Flask app that implements Google Sign-In (Google Identity Services) and stores an authenticated session in a signed HTTP-only cookie. It is meant as a clean starting point for any app that needs Google authentication before hitting protected API routes.
 
 ## Repository Layout
 - `server/app.py` - Flask API, session signing, Google ID token verification, and static file hosting.
