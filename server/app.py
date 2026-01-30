@@ -11,6 +11,14 @@ from dotenv import load_dotenv
 from flask import Flask, g, jsonify, request, send_from_directory
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
+import requests
+
+from subscriptions import (
+    init_subscription_db,
+    list_subscription_plans,
+    record_subscription_plan,
+    record_subscription_signup,
+)
 
 load_dotenv()
 
@@ -43,6 +51,35 @@ SESSION_SECRET = (
 )
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID') or os.getenv('VITE_GOOGLE_CLIENT_ID')
 SESSION_ISSUER = 'logintemplate'
+
+ADMIN_EMAILS = set(parse_origins(os.getenv('ADMIN_EMAILS')))
+
+PAYPAL_CLIENT_ID = os.getenv('PAYPAL_CLIENT_ID')
+PAYPAL_CLIENT_SECRET = os.getenv('PAYPAL_CLIENT_SECRET')
+PAYPAL_PLAN_ID = os.getenv('PAYPAL_PLAN_ID')
+PAYPAL_ENV = (os.getenv('PAYPAL_ENV') or 'sandbox').lower()
+PAYPAL_BASE_URL = os.getenv('PAYPAL_API_BASE_URL')
+SUBSCRIPTION_NAME = os.getenv('SUBSCRIPTION_NAME') or 'Prototype Subscription'
+SUBSCRIPTION_PRICE = os.getenv('SUBSCRIPTION_PRICE') or ''
+SUBSCRIPTION_CURRENCY = os.getenv('SUBSCRIPTION_CURRENCY') or 'USD'
+
+PAYPAL_ACCESS_TOKEN = None
+PAYPAL_ACCESS_TOKEN_EXP = 0
+
+SUBSCRIPTIONS_DB_READY = False
+
+
+def init_subscriptions():
+    global SUBSCRIPTIONS_DB_READY
+    try:
+        init_subscription_db()
+        SUBSCRIPTIONS_DB_READY = True
+    except Exception as exc:
+        SUBSCRIPTIONS_DB_READY = False
+        print(f'Failed to init subscriptions DB: {exc}')
+
+
+init_subscriptions()
 
 
 def base64url_encode(raw: bytes) -> str:
@@ -114,6 +151,87 @@ def set_session_cookie(response, token: str, clear: bool = False):
     return response
 
 
+def is_admin(session):
+    if not session:
+        return False
+    email = session.get('email')
+    if not email:
+        return False
+    if not ADMIN_EMAILS:
+        return False
+    return email.lower() in {value.lower() for value in ADMIN_EMAILS}
+
+
+def paypal_configured():
+    return bool(PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET and PAYPAL_PLAN_ID)
+
+
+def get_paypal_base_url():
+    if PAYPAL_BASE_URL:
+        return PAYPAL_BASE_URL.rstrip('/')
+    if PAYPAL_ENV == 'live':
+        return 'https://api-m.paypal.com'
+    return 'https://api-m.sandbox.paypal.com'
+
+
+def get_paypal_access_token():
+    global PAYPAL_ACCESS_TOKEN, PAYPAL_ACCESS_TOKEN_EXP
+    now = time.time()
+    if PAYPAL_ACCESS_TOKEN and (PAYPAL_ACCESS_TOKEN_EXP - 60) > now:
+        return PAYPAL_ACCESS_TOKEN
+    if not PAYPAL_CLIENT_ID or not PAYPAL_CLIENT_SECRET:
+        raise RuntimeError('PayPal credentials are missing')
+
+    response = requests.post(
+        f'{get_paypal_base_url()}/v1/oauth2/token',
+        auth=(PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET),
+        data={'grant_type': 'client_credentials'},
+        timeout=15,
+    )
+    response.raise_for_status()
+    data = response.json()
+    PAYPAL_ACCESS_TOKEN = data.get('access_token')
+    PAYPAL_ACCESS_TOKEN_EXP = now + int(data.get('expires_in') or 0)
+    if not PAYPAL_ACCESS_TOKEN:
+        raise RuntimeError('Failed to fetch PayPal access token')
+    return PAYPAL_ACCESS_TOKEN
+
+
+def fetch_paypal_subscription(subscription_id: str):
+    token = get_paypal_access_token()
+    response = requests.get(
+        f'{get_paypal_base_url()}/v1/billing/subscriptions/{subscription_id}',
+        headers={'Authorization': f'Bearer {token}'},
+        timeout=15,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def create_paypal_product(payload: dict):
+    token = get_paypal_access_token()
+    response = requests.post(
+        f'{get_paypal_base_url()}/v1/catalogs/products',
+        headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
+        json=payload,
+        timeout=15,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def create_paypal_plan(payload: dict):
+    token = get_paypal_access_token()
+    response = requests.post(
+        f'{get_paypal_base_url()}/v1/billing/plans',
+        headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
+        json=payload,
+        timeout=15,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def require_auth(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -164,6 +282,35 @@ def auth_config():
             'googleAuthConfigured': bool(GOOGLE_CLIENT_ID),
             'googleClientId': GOOGLE_CLIENT_ID or None,
             'sessionTtlMs': SESSION_MAX_AGE_MS,
+        }
+    )
+
+
+@app.get('/api/admin/config')
+def admin_config():
+    session = get_session_from_request()
+    return jsonify(
+        {
+            'authenticated': bool(session),
+            'isAdmin': bool(session and is_admin(session)),
+            'paypalConfigured': paypal_configured(),
+        }
+    )
+
+
+@app.get('/api/subscription/config')
+def subscription_config():
+    return jsonify(
+        {
+            'paypalConfigured': paypal_configured(),
+            'paypalClientId': PAYPAL_CLIENT_ID or None,
+            'paypalPlanId': PAYPAL_PLAN_ID or None,
+            'paypalEnv': PAYPAL_ENV,
+            'subscription': {
+                'name': SUBSCRIPTION_NAME,
+                'price': SUBSCRIPTION_PRICE,
+                'currency': SUBSCRIPTION_CURRENCY,
+            },
         }
     )
 
@@ -225,6 +372,175 @@ def auth_google():
     except Exception as exc:
         print(f'Google auth failed: {exc}')
         return jsonify({'error': 'Google authentication failed'}), 401
+
+
+@app.post('/api/subscription/verify')
+@require_auth
+def subscription_verify():
+    if not paypal_configured():
+        return jsonify({'error': 'PayPal is not configured'}), 500
+    if not SUBSCRIPTIONS_DB_READY:
+        return jsonify({'error': 'Subscriptions database not available'}), 500
+
+    payload = request.get_json(silent=True) or {}
+    subscription_id = payload.get('subscriptionId')
+    if not subscription_id or not isinstance(subscription_id, str):
+        return jsonify({'error': 'Missing subscriptionId'}), 400
+
+    try:
+        details = fetch_paypal_subscription(subscription_id)
+    except requests.RequestException as exc:
+        print(f'PayPal subscription fetch failed: {exc}')
+        return jsonify({'error': 'Unable to verify subscription'}), 502
+    except Exception as exc:
+        print(f'PayPal subscription verification error: {exc}')
+        return jsonify({'error': 'Unable to verify subscription'}), 502
+
+    plan_id = details.get('plan_id')
+    if PAYPAL_PLAN_ID and plan_id != PAYPAL_PLAN_ID:
+        return jsonify({'error': 'Subscription plan mismatch'}), 400
+
+    if not details.get('id'):
+        details['id'] = subscription_id
+
+    try:
+        record_subscription_signup(g.user, details)
+    except Exception as exc:
+        print(f'Failed to record subscription: {exc}')
+        return jsonify({'error': 'Failed to record subscription'}), 500
+
+    return jsonify(
+        {
+            'ok': True,
+            'subscriptionId': details.get('id') or subscription_id,
+            'status': details.get('status'),
+            'planId': plan_id,
+            'statusUpdatedAt': details.get('status_update_time'),
+            'startTime': details.get('start_time'),
+        }
+    )
+
+
+@app.get('/api/admin/plans')
+@require_auth
+def admin_plans():
+    if not is_admin(g.user):
+        return jsonify({'error': 'Admin access required'}), 403
+    if not SUBSCRIPTIONS_DB_READY:
+        return jsonify({'error': 'Subscriptions database not available'}), 500
+    try:
+        plans = list_subscription_plans()
+    except Exception as exc:
+        print(f'Failed to load plans: {exc}')
+        return jsonify({'error': 'Unable to load plans'}), 500
+    return jsonify({'plans': plans})
+
+
+@app.post('/api/admin/plans/create')
+@require_auth
+def admin_create_plan():
+    if not is_admin(g.user):
+        return jsonify({'error': 'Admin access required'}), 403
+    if not PAYPAL_CLIENT_ID or not PAYPAL_CLIENT_SECRET:
+        return jsonify({'error': 'PayPal credentials are missing'}), 500
+    if not SUBSCRIPTIONS_DB_READY:
+        return jsonify({'error': 'Subscriptions database not available'}), 500
+
+    payload = request.get_json(silent=True) or {}
+    product_name = (payload.get('productName') or '').strip()
+    product_description = (payload.get('productDescription') or '').strip()
+    plan_name = (payload.get('planName') or '').strip() or product_name
+    plan_description = (payload.get('planDescription') or '').strip()
+    currency = (payload.get('currency') or 'USD').strip().upper()
+    interval_unit = (payload.get('intervalUnit') or 'MONTH').strip().upper()
+    interval_count = parse_number(payload.get('intervalCount'), 1)
+    price_value = str(payload.get('price') or '').strip()
+
+    if not product_name:
+        return jsonify({'error': 'Product name is required'}), 400
+    if not plan_name:
+        return jsonify({'error': 'Plan name is required'}), 400
+    if not price_value:
+        return jsonify({'error': 'Price is required'}), 400
+    if interval_count <= 0:
+        return jsonify({'error': 'Interval count must be at least 1'}), 400
+    allowed_units = {'DAY', 'WEEK', 'MONTH', 'YEAR'}
+    if interval_unit not in allowed_units:
+        return jsonify({'error': 'Interval unit must be DAY, WEEK, MONTH, or YEAR'}), 400
+
+    product_payload = {
+        'name': product_name,
+        'type': 'SERVICE',
+        'category': 'SOFTWARE',
+    }
+    if product_description:
+        product_payload['description'] = product_description
+
+    plan_payload = {
+        'product_id': None,
+        'name': plan_name,
+        'billing_cycles': [
+            {
+                'frequency': {
+                    'interval_unit': interval_unit,
+                    'interval_count': interval_count,
+                },
+                'tenure_type': 'REGULAR',
+                'sequence': 1,
+                'total_cycles': 0,
+                'pricing_scheme': {
+                    'fixed_price': {
+                        'value': price_value,
+                        'currency_code': currency,
+                    }
+                },
+            }
+        ],
+        'payment_preferences': {
+            'auto_bill_outstanding': True,
+            'setup_fee_failure_action': 'CANCEL',
+            'payment_failure_threshold': 3,
+        },
+    }
+    if plan_description:
+        plan_payload['description'] = plan_description
+
+    try:
+        product = create_paypal_product(product_payload)
+        plan_payload['product_id'] = product.get('id')
+        plan = create_paypal_plan(plan_payload)
+    except requests.RequestException as exc:
+        print(f'PayPal plan creation failed: {exc}')
+        return jsonify({'error': 'PayPal plan creation failed'}), 502
+    except Exception as exc:
+        print(f'PayPal plan creation error: {exc}')
+        return jsonify({'error': 'PayPal plan creation failed'}), 502
+
+    try:
+        record_subscription_plan(
+            g.user,
+            product,
+            plan,
+            price_value,
+            currency,
+            interval_unit,
+            interval_count,
+        )
+    except Exception as exc:
+        print(f'Failed to record plan: {exc}')
+        return jsonify({'error': 'Failed to record plan'}), 500
+
+    return jsonify(
+        {
+            'ok': True,
+            'product': {'id': product.get('id'), 'name': product.get('name')},
+            'plan': {
+                'id': plan.get('id'),
+                'name': plan.get('name'),
+                'status': plan.get('status'),
+            },
+        }
+    )
 
 
 @app.get('/api/secret')

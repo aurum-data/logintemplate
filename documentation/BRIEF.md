@@ -34,6 +34,11 @@ is `HttpOnly`, `SameSite=Lax`, and marked `Secure` in production.
 - `GET /api/auth/me` - Reads the session cookie and returns `{ authenticated, user, expiresAt }`.
 - `POST /api/auth/logout` - Clears the session cookie.
 - `GET /api/secret` - Example protected endpoint using `require_auth`.
+- `GET /api/subscription/config` - Returns PayPal + subscription display config.
+- `POST /api/subscription/verify` - Validates a PayPal subscription ID and records the signup.
+- `GET /api/admin/config` - Returns `{ authenticated, isAdmin, paypalConfigured }`.
+- `GET /api/admin/plans` - Lists PayPal plans created via the admin UI.
+- `POST /api/admin/plans/create` - Creates a PayPal product + plan and stores it.
 
 ## Environment Variables
 Required:
@@ -45,6 +50,16 @@ Optional:
 - `AUTH_SESSION_TTL_MS` - Session lifetime in ms (default 7 days).
 - `CORS_ORIGIN` / `CORS_ORIGINS` - Comma-separated list of allowed origins.
 - `COOKIE_SECURE` - Force Secure cookies (`true`), otherwise `NODE_ENV=production` enables it.
+- `PAYPAL_CLIENT_ID` - PayPal REST client ID (required for Subscription page).
+- `PAYPAL_CLIENT_SECRET` - PayPal REST client secret.
+- `PAYPAL_PLAN_ID` - PayPal subscription plan ID.
+- `PAYPAL_ENV` - `sandbox` or `live` (default `sandbox`).
+- `SUBSCRIPTION_NAME` - Display name for the subscription plan.
+- `SUBSCRIPTION_PRICE` - Display price for the subscription plan.
+- `SUBSCRIPTION_CURRENCY` - Display currency (default `USD`).
+- `ADMIN_EMAILS` - Comma-separated list of admin email addresses allowed to access admin tooling.
+- `DATABASE_URL` - Postgres connection string for subscription signups.
+- `SUBSCRIPTIONS_DB_PATH` - SQLite file path fallback when `DATABASE_URL` is not set.
 
 Notes:
 - `GOOGLE_CLIENT_ID` must be configured with the exact JavaScript origins you will use (local + production).
