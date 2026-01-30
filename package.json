@@ -1,0 +1,24 @@
+﻿{
+  "name": "logintemplate",
+  "version": "1.0.0",
+  "description": "Template for a Google-authenticated React + Express app.",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "node server/index.js",
+    "start": "node server/index.js",
+    "build": "npm --prefix client run build",
+    "client:dev": "npm --prefix client run dev",
+    "client:build": "npm --prefix client run build",
+    "client:preview": "npm --prefix client run preview",
+    "postinstall": "npm --prefix client install"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "google-auth-library": "^9.15.1"
+  }
+}
