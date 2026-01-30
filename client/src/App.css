@@ -262,6 +262,16 @@ select {
   font-size: 0.85rem;
 }
 
+.plan-link {
+  color: var(--accent-strong);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.plan-link:hover {
+  text-decoration: underline;
+}
+
 .actions {
   margin-top: 16px;
   display: flex;

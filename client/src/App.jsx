@@ -113,6 +113,11 @@ function App() {
   })
   const paypalButtonRef = useRef(null)
 
+  const paypalPlanBaseUrl =
+    subscriptionConfig?.paypalEnv === 'live'
+      ? 'https://www.paypal.com/billing/plans/'
+      : 'https://www.sandbox.paypal.com/billing/plans/'
+
   const statusLabel = useMemo(() => {
     if (authLoading) return 'Checking session'
     if (authUser) return 'Signed in'
@@ -835,7 +840,22 @@ function App() {
                         <span>
                           {plan.billing_interval_count} {plan.billing_interval_unit}
                         </span>
-                        <span className="mono">{plan.paypal_plan_id}</span>
+                        <span className="mono">
+                          {plan.paypal_plan_id}
+                          {plan.paypal_plan_id ? (
+                            <>
+                              {' '}
+                              <a
+                                href={`${paypalPlanBaseUrl}${plan.paypal_plan_id}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="plan-link"
+                              >
+                                View
+                              </a>
+                            </>
+                          ) : null}
+                        </span>
                       </div>
                     ))}
                   </div>
