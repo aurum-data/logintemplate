@@ -350,6 +350,10 @@ function App() {
       })
     }
 
+    if (page !== 'subscription') {
+      clearContainers()
+      return
+    }
     if (!subscriptionConfig?.paypalConfigured) {
       clearContainers()
       return
@@ -463,7 +467,7 @@ function App() {
         }
       })
     }
-  }, [authUser, chargeConsent, subscriptionConfig, subscriptionPlans])
+  }, [authUser, chargeConsent, subscriptionConfig, subscriptionPlans, page])
 
   const handleGoogleCredential = async (credential) => {
     try {
